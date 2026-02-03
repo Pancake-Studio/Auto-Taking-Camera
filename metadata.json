@@ -1,0 +1,7 @@
+{
+  "name": "Gesture Photobooth",
+  "description": "A touchless photobooth experience controlled by hand gestures.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
