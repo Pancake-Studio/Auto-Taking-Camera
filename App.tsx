@@ -1,12 +1,28 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import Webcam from 'react-webcam';
-import { Camera, RefreshCw, Hand, ThumbsUp, X, Settings2 } from 'lucide-react';
-import { initializeHandLandmarker, detectGestureInVideo } from './services/gestureService';
-import { AppStage, DetectedGesture, PhotoData } from './types';
-import { GESTURE_HOLD_DURATION_MS, COUNTDOWN_DURATION_SEC, MAX_PHOTOS } from './constants';
+import { Camera, RefreshCw, Hand, ThumbsUp, X, Settings2, Sparkles } from 'lucide-react';
+import { initializeHandLandmarker } from './services/gestureService';
+import { AppStage, PhotoData } from './types';
+import { COUNTDOWN_DURATION_SEC, MAX_PHOTOS } from './constants';
 import PhotoStrip from './components/PhotoStrip';
+import DownloadPage from './components/DownloadPage';
+import GestureCanvas from './components/GestureCanvas';
+
+declare global {
+  interface Window {
+    lastTriggeredGesture: string | null;
+  }
+}
 
 const App: React.FC = () => {
+  // Check if we should show download page
+  const isDownloadPage = window.location.hash.startsWith('#download');
+
+  if (isDownloadPage) {
+    return <DownloadPage />;
+  }
+
+  // Main photobooth app
   // State
   const [stage, setStage] = useState<AppStage>(AppStage.LOADING_MODEL);
   const [photos, setPhotos] = useState<PhotoData[]>([]);
@@ -15,42 +31,61 @@ const App: React.FC = () => {
   const [showDeviceMenu, setShowDeviceMenu] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [flash, setFlash] = useState(false);
-
-  // Gesture State
-  const [gesture, setGesture] = useState<DetectedGesture | null>(null);
-  const [gestureStartTime, setGestureStartTime] = useState<number | null>(null);
-  const [loadingProgress, setLoadingProgress] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const isCapturingRef = useRef(false);
 
   // Refs
   const webcamRef = useRef<Webcam>(null);
-  const requestRef = useRef<number>(0);
-  const lastVideoTimeRef = useRef<number>(-1);
 
   // Initialize
   useEffect(() => {
     const load = async () => {
-      await initializeHandLandmarker();
-      setStage(AppStage.IDLE);
-      
-      // Get Cameras
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const videoDevices = devices.filter(d => d.kind === 'videoinput');
-      setDevices(videoDevices);
-      if (videoDevices.length > 0) setActiveDeviceId(videoDevices[0].deviceId);
+      try {
+        setError(null);
+        // 1. Request Camera Permission explicitly
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+          stream.getTracks().forEach(track => track.stop());
+        } catch (permErr: any) {
+          console.warn("Camera permission check failed:", permErr);
+        }
+
+        await initializeHandLandmarker();
+        setStage(AppStage.IDLE);
+
+        // 2. Get Cameras
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(d => d.kind === 'videoinput');
+        setDevices(videoDevices);
+
+        if (videoDevices.length > 0) {
+          setActiveDeviceId(videoDevices[0].deviceId);
+        }
+      } catch (err: any) {
+        console.error("Initialization Failed:", err);
+        setError(`Failed to load AI System: ${err.message || 'Unknown error'}`);
+        setStage(AppStage.IDLE);
+      }
     };
     load();
   }, []);
 
   const restartApp = useCallback(() => {
     setPhotos([]);
+    setError(null);
+    setCountdown(null);
     setStage(AppStage.IDLE);
+    isCapturingRef.current = false;
   }, []);
 
   const startCountdown = useCallback(() => {
+    // Lock to prevent double triggering
+    if (isCapturingRef.current) return;
+
     setStage(AppStage.COUNTDOWN);
     let count = COUNTDOWN_DURATION_SEC;
     setCountdown(count);
-    
+
     const interval = setInterval(() => {
       count--;
       if (count === 0) {
@@ -64,284 +99,208 @@ const App: React.FC = () => {
   }, []);
 
   const takePhoto = useCallback(() => {
+    if (isCapturingRef.current) return;
+    isCapturingRef.current = true; // Lock
+
     setStage(AppStage.CAPTURE_FLASH);
     setFlash(true);
     setTimeout(() => {
       if (webcamRef.current) {
         const imageSrc = webcamRef.current.getScreenshot();
         if (imageSrc) {
-          const newPhotos = (prev: PhotoData[]) => [...prev, { id: Date.now().toString(), dataUrl: imageSrc, timestamp: Date.now() }];
-          
           setPhotos(currentPhotos => {
             const updated = [...currentPhotos, { id: Date.now().toString(), dataUrl: imageSrc, timestamp: Date.now() }];
-             if (updated.length >= MAX_PHOTOS) {
-                // Determine finish
-                setTimeout(() => setStage(AppStage.RESULT), 500); // Small delay to show flash
-             } else {
-                setTimeout(() => setStage(AppStage.IDLE), 1000);
-             }
-             return updated;
+            if (updated.length >= MAX_PHOTOS) {
+              setTimeout(() => setStage(AppStage.RESULT), 500);
+            } else {
+              setTimeout(() => {
+                setStage(AppStage.IDLE);
+                isCapturingRef.current = false; // Unlock if taking more photos
+              }, 1000);
+            }
+            return updated;
           });
           setFlash(false);
+          // Note: isCapturingRef stays true if we go to RESULT, unlocked only on restart
+          if (photos.length + 1 < MAX_PHOTOS) {
+            // Logic above handles multi-photo unlock, but for MAX=1 we keep locked until restart
+          }
+        } else {
+          // Failed to capture
+          isCapturingRef.current = false;
+          setStage(AppStage.IDLE);
         }
       }
     }, 150);
-  }, []);
+  }, [photos.length]);
 
   const finishSession = useCallback(() => {
     setStage(AppStage.RESULT);
   }, []);
 
-  // Main Loop
-  const animate = useCallback((time: number) => {
-    // Run detection in IDLE and RESULT stages
-    const isDetectionActive = (stage === AppStage.IDLE || stage === AppStage.RESULT);
-
-    if (isDetectionActive && webcamRef.current && webcamRef.current.video && webcamRef.current.video.readyState === 4) {
-      const video = webcamRef.current.video;
-      if (video.currentTime !== lastVideoTimeRef.current) {
-        lastVideoTimeRef.current = video.currentTime;
-        const result = detectGestureInVideo(video, Date.now());
-        
-        // Handle Gesture Logic
-        if (result) {
-          const currentGestureName = result.name; 
-          
-          // Determine the target action based on gesture
-          // IDLE: Open_Palm -> Capture, OK_Hand -> Finish
-          // RESULT: Open_Palm -> Restart
-          
-          let isTriggerGesture = false;
-          
-          if (stage === AppStage.IDLE) {
-             const isCaptureGesture = currentGestureName === 'Open_Palm';
-             const isFinishGesture = currentGestureName === 'OK_Hand';
-             isTriggerGesture = isCaptureGesture || (isFinishGesture && photos.length > 0);
-          } else if (stage === AppStage.RESULT) {
-             const isRestartGesture = currentGestureName === 'Open_Palm';
-             isTriggerGesture = isRestartGesture;
-          }
-          
-          // Check if we have a currently tracked gesture
-          setGesture((prev) => {
-            const now = Date.now();
-            
-            if (isTriggerGesture) {
-              
-              if (prev && prev.name === currentGestureName) {
-                const elapsed = now - (gestureStartTime || now);
-                const progress = Math.min(elapsed / GESTURE_HOLD_DURATION_MS, 1);
-                setLoadingProgress(progress);
-                
-                if (progress >= 1) {
-                  // TRIGGER ACTION
-                  setGestureStartTime(null);
-                  setLoadingProgress(0);
-                  
-                  if (stage === AppStage.IDLE) {
-                     if (currentGestureName === 'Open_Palm') startCountdown();
-                     if (currentGestureName === 'OK_Hand') finishSession();
-                  } else if (stage === AppStage.RESULT) {
-                     if (currentGestureName === 'Open_Palm') restartApp();
-                  }
-                  
-                  return null; 
-                }
-                return { ...result, name: currentGestureName as any };
-              } else {
-                setGestureStartTime(now);
-                setLoadingProgress(0);
-                return { ...result, name: currentGestureName as any };
-              }
-            } else {
-              setGestureStartTime(null);
-              setLoadingProgress(0);
-              return null;
-            }
-          });
-        } else {
-          setGesture(null);
-          setGestureStartTime(null);
-          setLoadingProgress(0);
-        }
-      }
-    } else {
-        setGesture(null);
-    }
-    requestRef.current = requestAnimationFrame(animate);
-  }, [stage, photos.length, gestureStartTime, startCountdown, finishSession, restartApp]);
-
+  // Reset gesture lock when stage changes
   useEffect(() => {
-    requestRef.current = requestAnimationFrame(animate);
-    return () => cancelAnimationFrame(requestRef.current!);
-  }, [animate]);
-
-
-  // Rendering Helper: Loading Circle
-  const renderLoadingCursor = () => {
-    if (!gesture || loadingProgress <= 0) return null;
-
-    // Mirror X for cursor position to match mirrored video
-    const left = `${gesture.x * 100}%`; 
-    const top = `${gesture.y * 100}%`;
-    
-    const isRestart = stage === AppStage.RESULT;
-    const color = isRestart ? 'text-white' : (gesture.name === 'Open_Palm' ? 'text-rose-500' : 'text-emerald-500');
-    let message = '';
-    
+    window.lastTriggeredGesture = null;
     if (stage === AppStage.IDLE) {
-        message = gesture.name === 'Open_Palm' ? 'กำลังเริ่มถ่าย...' : 'กำลังเสร็จสิ้น...';
-    } else {
-        message = 'กำลังเริ่มใหม่...';
+      isCapturingRef.current = false;
     }
+  }, [stage]);
 
-    return (
-      <div 
-        className="absolute w-24 h-24 pointer-events-none transform -translate-x-1/2 -translate-y-1/2 flex items-center justify-center"
-        style={{ left, top }}
-      >
-        {/* SVG Circle Progress */}
-        <svg className="w-full h-full transform -rotate-90 drop-shadow-lg">
-          <circle cx="48" cy="48" r="40" stroke="rgba(255,255,255,0.3)" strokeWidth="8" fill="transparent" />
-          <circle 
-            cx="48" cy="48" r="40" 
-            stroke="currentColor" 
-            strokeWidth="8" 
-            fill="transparent" 
-            className={`${color} transition-all duration-75`}
-            strokeDasharray="251.2"
-            strokeDashoffset={251.2 * (1 - loadingProgress)}
-            strokeLinecap="round"
-          />
-        </svg>
-        <span className="absolute text-white font-bold text-lg bg-black/60 px-3 py-1 rounded-full whitespace-nowrap mt-28 backdrop-blur-sm border border-white/20">
-          {message}
-        </span>
-      </div>
-    );
-  };
+  const handleGestureTrigger = useCallback((gestureName: string) => {
+    if (stage === AppStage.IDLE) {
+      if (gestureName === 'Open_Palm') startCountdown();
+    } else if (stage === AppStage.RESULT) {
+      if (gestureName === 'Open_Palm') restartApp();
+    }
+  }, [stage, photos.length, startCountdown, finishSession, restartApp]);
+
+  // Logic to determine if detection should run
+  const isDetectionActive = (stage === AppStage.IDLE || stage === AppStage.RESULT) && !error;
 
   if (stage === AppStage.LOADING_MODEL) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-900 text-white">
-        <div className="w-16 h-16 border-4 border-rose-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-        <h1 className="text-2xl font-bold animate-pulse">กำลังโหลดระบบ AI...</h1>
-        <p className="text-slate-400 mt-2">กรุณารอสักครู่</p>
+      <div className="min-h-screen flex flex-col items-center justify-center bg-pink-50 text-slate-800 font-fredoka">
+        <div className="w-20 h-20 border-8 border-pink-200 border-t-pink-500 rounded-full animate-spin mb-6"></div>
+        <h1 className="text-3xl font-bold animate-pulse text-pink-500">K-Pop Booth AI...</h1>
+        <p className="text-slate-400 mt-2 font-medium">กำลังโหลดระบบ...</p>
+
+        {error && (
+          <div className="mt-8 p-4 bg-red-50 border-2 border-red-200 rounded-xl max-w-md text-center">
+            <p className="text-red-500 mb-2 font-bold">Oops!</p>
+            <p className="text-sm text-red-400">{error}</p>
+            <button
+              onClick={() => window.location.reload()}
+              className="mt-4 px-6 py-2 bg-red-400 text-white rounded-full font-bold hover:bg-red-500 transition-colors shadow-lg"
+            >
+              Retry
+            </button>
+          </div>
+        )}
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-black flex flex-col overflow-hidden relative">
-      
+    <div className="min-h-screen bg-pink-50 flex flex-col overflow-hidden relative font-sans text-slate-800">
+
+      {/* Error Overlay */}
+      {error && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[100] bg-red-500/90 text-white px-6 py-3 rounded-full shadow-xl backdrop-blur-sm font-bold flex items-center gap-2 animate-bounce">
+          <span>⚠️ {error}</span>
+          <button onClick={() => window.location.reload()} className="underline text-white/80 hover:text-white ml-2">Reload</button>
+        </div>
+      )}
+
       {/* Flash Overlay */}
       {stage === AppStage.CAPTURE_FLASH && (
-        <div className="absolute inset-0 bg-white z-[100] animate-out fade-out duration-300 pointer-events-none" />
+        <div className="absolute inset-0 bg-white z-[100] animate-out fade-out duration-500 pointer-events-none" />
       )}
 
       {/* Main Camera View - Always Visible */}
-      <div className="absolute inset-0 z-0">
+      <div className="absolute inset-0 z-0 bg-black">
         <Webcam
           ref={webcamRef}
           audio={false}
           screenshotFormat="image/jpeg"
           videoConstraints={{ deviceId: activeDeviceId }}
           className="w-full h-full object-cover transform scale-x-[-1]"
+          onUserMediaError={(err) => setError(`Camera Error: ${err.toString()}`)}
+          onUserMedia={() => { }}
+          disablePictureInPicture={false}
+          forceScreenshotSourceSize={false}
+          imageSmoothing={true}
+          mirrored={false}
+          screenshotQuality={0.92}
         />
+        {/* Dark overlay for better UI contrast */}
+        <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-transparent to-black/40 pointer-events-none" />
       </div>
-        
+
       {/* UI Overlay - Instructions & Countdown */}
       <div className="absolute inset-0 pointer-events-none z-10">
-        
-        {/* Instructions Overlay - Only in IDLE */}
-        {stage === AppStage.IDLE && (
-          <div className="absolute bottom-10 left-0 right-0 flex justify-center gap-8 items-end pb-8 bg-gradient-to-t from-black/80 to-transparent pt-32">
-            
-            <div className="flex flex-col items-center gap-2 text-white/90 anim-pop">
-               <div className="w-20 h-20 rounded-full bg-black/40 backdrop-blur-md border-2 border-rose-500/50 flex items-center justify-center shadow-[0_0_15px_rgba(244,63,94,0.4)]">
-                  <Hand size={40} className="text-rose-400" />
-               </div>
-               <div className="text-center">
-                  <span className="block text-lg font-bold text-white shadow-black drop-shadow-md">แบมือค้างไว้ 3 วิ</span>
-                  <span className="text-sm text-rose-300 font-medium">เพื่อถ่ายรูป ({photos.length}/{MAX_PHOTOS})</span>
-               </div>
-            </div>
 
-            {photos.length > 0 && (
-              <div className="flex flex-col items-center gap-2 text-white/90 anim-pop">
-                <div className="w-20 h-20 rounded-full bg-black/40 backdrop-blur-md border-2 border-emerald-500/50 flex items-center justify-center shadow-[0_0_15px_rgba(16,185,129,0.4)]">
-                    <div className="relative">
-                      <span className="absolute -top-3 -right-3 text-emerald-400 text-sm font-bold bg-black/50 px-1 rounded">OK</span>
-                      <div className="w-8 h-8 rounded-full border-4 border-emerald-400 flex items-center justify-center" />
-                    </div>
-                </div>
-                <div className="text-center">
-                    <span className="block text-lg font-bold text-white shadow-black drop-shadow-md">ทำมือ OK ค้างไว้</span>
-                    <span className="text-sm text-emerald-300 font-medium">เพื่อจบงาน</span>
+        {/* Header / Brand */}
+        <div className="absolute top-6 left-6 z-20">
+          <div className="bg-white/20 backdrop-blur-md px-4 py-2 rounded-full border border-white/30 text-white font-bold flex items-center gap-2 shadow-lg">
+            <Sparkles size={18} className="text-yellow-300" />
+            <span>Ferrum Group X โรงเรียนสันติสุขพิทยาคม</span>
+          </div>
+        </div>
+
+        {/* Instructions Overlay - Only in IDLE */}
+        {stage === AppStage.IDLE && !error && (
+          <div className="absolute bottom-12 left-0 right-0 flex justify-center gap-12 items-end pb-8">
+
+            <div className="flex flex-col items-center gap-3 text-white anim-pop hover:scale-105 transition-transform duration-300">
+              <div className="relative">
+                <div className="absolute -inset-4 bg-pink-500/30 rounded-full blur-xl animate-pulse"></div>
+                <div className="w-24 h-24 rounded-full bg-white/10 backdrop-blur-md border-[3px] border-pink-400 flex items-center justify-center shadow-2xl overflow-hidden group">
+                  <Hand size={48} className="text-pink-300 group-hover:rotate-12 transition-transform" />
                 </div>
               </div>
-            )}
+              <div className="text-center bg-black/40 backdrop-blur-sm px-6 py-3 rounded-2xl border border-white/10">
+                <span className="block text-xl font-bold text-white mb-1">แบมือแล้วโบกไปมา</span>
+                <span className="text-sm text-pink-300 font-medium">เพื่อถ่ายรูป ({photos.length}/{MAX_PHOTOS})</span>
+              </div>
+            </div>
+
+
           </div>
         )}
 
         {/* Countdown Overlay */}
         {stage === AppStage.COUNTDOWN && countdown !== null && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-sm z-40">
-            <span className="text-[12rem] font-black text-white animate-bounce drop-shadow-[0_0_30px_rgba(244,63,94,1)]">
-              {countdown}
-            </span>
+          <div className="absolute inset-0 flex items-center justify-center bg-black/20 backdrop-blur-[2px] z-40">
+            <div className="relative">
+              <div className="absolute inset-0 bg-pink-500 blur-[80px] opacity-50 animate-pulse"></div>
+              <span className="relative text-[15rem] font-black text-white animate-bounce drop-shadow-[0_10px_30px_rgba(0,0,0,0.5)] font-fredoka">
+                {countdown}
+              </span>
+            </div>
           </div>
         )}
       </div>
 
       {/* Result Overlay - PhotoStrip */}
       {stage === AppStage.RESULT && (
-         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-500 p-4">
-            <PhotoStrip photos={photos} onRestart={restartApp} />
-         </div>
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-900/90 backdrop-blur-md animate-in fade-in duration-500">
+          <PhotoStrip photos={photos} onRestart={restartApp} />
+        </div>
       )}
 
-      {/* Loading Cursor Container - Highest Z-Index to be visible over Result Overlay */}
-      <div className="absolute inset-0 pointer-events-none z-[70]">
-        {renderLoadingCursor()}
-      </div>
+      {/* Gesture Canvas (Detects & Renders Cursor) */}
+      <GestureCanvas
+        webcamRef={webcamRef}
+        isDetectionActive={isDetectionActive}
+        onGestureTrigger={handleGestureTrigger}
+        stage={stage}
+        error={error}
+      />
 
       {/* Camera Selection Button */}
-      <div className="absolute top-4 right-4 z-[60] pointer-events-auto">
-        <button 
+      <div className="absolute top-6 right-6 z-[60] pointer-events-auto">
+        <button
           onClick={() => setShowDeviceMenu(!showDeviceMenu)}
-          className="p-3 bg-black/40 backdrop-blur hover:bg-black/60 rounded-full text-white transition-all border border-white/10"
+          className="p-3 bg-white/10 backdrop-blur-md hover:bg-white/20 rounded-full text-white transition-all border border-white/20 shadow-lg"
         >
           <Settings2 size={24} />
         </button>
-        
+
         {showDeviceMenu && (
-           <div className="absolute top-14 right-0 bg-slate-800 rounded-lg shadow-xl p-2 w-64 border border-slate-700">
-             <h3 className="text-xs font-bold text-slate-400 uppercase mb-2 px-2">Select Camera</h3>
-             {devices.map((device) => (
-               <button
-                 key={device.deviceId}
-                 onClick={() => { setActiveDeviceId(device.deviceId); setShowDeviceMenu(false); }}
-                 className={`w-full text-left px-3 py-2 text-sm rounded ${activeDeviceId === device.deviceId ? 'bg-rose-500 text-white' : 'text-slate-300 hover:bg-slate-700'}`}
-               >
-                 {device.label || `Camera ${device.deviceId.slice(0, 5)}...`}
-               </button>
-             ))}
-           </div>
+          <div className="absolute top-16 right-0 bg-white rounded-2xl shadow-2xl p-3 w-72 border border-slate-100 transform origin-top-right animate-in scale-95 duration-200">
+            <h3 className="text-xs font-bold text-slate-400 uppercase mb-3 px-2 tracking-wider">Select Camera</h3>
+            {devices.map((device) => (
+              <button
+                key={device.deviceId}
+                onClick={() => { setActiveDeviceId(device.deviceId); setShowDeviceMenu(false); }}
+                className={`w-full text-left px-4 py-3 text-sm rounded-xl mb-1 transition-colors ${activeDeviceId === device.deviceId ? 'bg-pink-500 text-white font-bold shadow-md' : 'text-slate-600 hover:bg-slate-100'}`}
+              >
+                {device.label || `Camera ${device.deviceId.slice(0, 5)}...`}
+              </button>
+            ))}
+          </div>
         )}
       </div>
-
-       {/* Small Photo Previews (Left Side) - Hidden in Result */}
-       {stage !== AppStage.RESULT && (
-        <div className="absolute top-4 left-4 flex flex-col gap-3 pointer-events-none z-20">
-            {photos.map((p, i) => (
-              <div key={p.id} className="w-20 aspect-[4/3] bg-black border-2 border-white/50 rounded-lg overflow-hidden shadow-xl transform rotate-2 origin-left animate-in slide-in-from-left duration-500">
-                <img src={p.dataUrl} className="w-full h-full object-cover transform scale-x-[-1]" />
-              </div>
-            ))}
-        </div>
-       )}
-
     </div>
   );
 };

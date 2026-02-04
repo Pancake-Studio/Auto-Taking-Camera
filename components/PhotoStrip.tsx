@@ -1,7 +1,8 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { PhotoData } from '../types';
 import { QRCodeSVG } from 'qrcode.react';
-import { Hand } from 'lucide-react';
+import { Hand, Loader2, Sparkles, Download } from 'lucide-react';
+import { uploadPhotos } from '../services/uploadService';
 
 interface PhotoStripProps {
   photos: PhotoData[];
@@ -9,55 +10,111 @@ interface PhotoStripProps {
 }
 
 const PhotoStrip: React.FC<PhotoStripProps> = ({ photos, onRestart }) => {
-  // Fix: Memoize the QR value so it doesn't change on every render (e.g. when gesture progress updates)
-  const qrValue = useMemo(() => "https://example.com/photobooth/download?id=" + Date.now(), []);
+  const [uploading, setUploading] = useState(true);
+  const [uploadedUrls, setUploadedUrls] = useState<string[]>([]);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  // Upload photos to Uploadcare on mount
+  useEffect(() => {
+    const upload = async () => {
+      try {
+        const urls = await uploadPhotos(photos);
+        setUploadedUrls(urls);
+        setUploading(false);
+      } catch (error) {
+        console.error('Upload failed:', error);
+        setUploadError('การอัพโหลดล้มเหลว กรุณาลองใหม่อีกครั้ง');
+        setUploading(false);
+      }
+    };
+    upload();
+  }, [photos]);
+
+  // Create QR code URL
+  const baseUrl = import.meta.env.VITE_APP_URL || window.location.origin;
+  const qrValue = useMemo(() => {
+    if (uploadedUrls.length === 0) return '';
+    const urlsParam = encodeURIComponent(JSON.stringify(uploadedUrls));
+    return `${baseUrl}/#download?urls=${urlsParam}`;
+  }, [baseUrl, uploadedUrls]);
 
   return (
-    <div className="flex flex-col items-center justify-center w-full h-full p-4">
-      
-      {/* Central Card */}
-      <div className="bg-slate-900/90 p-6 rounded-3xl border border-white/20 shadow-2xl flex flex-col items-center text-center max-w-lg w-full backdrop-blur-xl animate-in fade-in zoom-in duration-300">
-        
-        <h2 className="text-2xl font-bold text-white mb-4 drop-shadow-md">รูปถ่ายของคุณ!</h2>
+    <div className="flex flex-col items-center justify-center w-full h-full p-6 animate-in fade-in zoom-in duration-500">
 
-        {/* Photos Grid */}
-        <div className="flex gap-2 mb-6 w-full justify-center overflow-x-auto">
-            {photos.map((photo) => (
-                <div key={photo.id} className="w-24 h-32 bg-black rounded-lg overflow-hidden border-2 border-white/20 shadow-md shrink-0">
-                    <img src={photo.dataUrl} alt="Booth photo" className="w-full h-full object-cover transform scale-x-[-1]" />
+      {/* Main Container Card */}
+      <div className="bg-white/90 backdrop-blur-xl p-8 rounded-[3rem] shadow-2xl flex flex-row gap-8 items-center max-w-5xl w-full border-4 border-white relative overflow-hidden">
+
+        {/* Decorative elements */}
+        <div className="absolute top-0 right-0 w-32 h-32 bg-pink-200 rounded-full blur-[60px] opacity-60 pointer-events-none"></div>
+        <div className="absolute bottom-0 left-0 w-40 h-40 bg-purple-200 rounded-full blur-[60px] opacity-60 pointer-events-none"></div>
+
+        {/* Left Side: Large Photo Preview */}
+        <div className="flex-1 flex justify-center items-center relative group">
+          {photos.length > 0 && (
+            <div className="relative transform rotate-[-2deg] transition-transform group-hover:rotate-0 duration-500">
+              <div className="absolute inset-0 bg-black rounded-2xl transform translate-x-2 translate-y-3 opacity-20 blur-sm"></div>
+              <div className="bg-white p-3 rounded-2xl shadow-xl border border-slate-100">
+                {/* Changed aspect-ratio to 4/3 (Landscape) */}
+                <div className="overflow-hidden rounded-xl relative max-w-[60vw] max-h-[60vh] aspect-[4/3]">
+                  <img
+                    src={photos[0].dataUrl}
+                    alt="Booth photo"
+                    className="w-full h-full object-cover transform scale-x-[-1]"
+                  />
                 </div>
-            ))}
-        </div>
-        
-        <div className="flex flex-row items-center gap-6">
-            <div className="bg-white p-3 rounded-xl shadow-lg transform transition-transform hover:scale-105 duration-300">
-               <QRCodeSVG value={qrValue} size={140} level="H" />
+                <div className="mt-2 text-center text-slate-400 font-bold tracking-widest text-xs uppercase opacity-50">
+                  Ferrum Group X โรงเรียนสันติสุขพิทยาคม
+                </div>
+              </div>
+
+              {/* Sticker Decorations */}
+              <div className="absolute -top-6 -right-6 animate-bounce delay-700">
+                <Sparkles size={40} className="text-yellow-400 drop-shadow-sm" />
+              </div>
             </div>
-            
-            <div className="flex flex-col items-start text-left">
-                <p className="text-lg font-bold text-white mb-1">สแกนเลย!</p>
-                <p className="text-xs text-slate-400 max-w-[120px]">
-                   ใช้มือถือสแกนเพื่อดาวน์โหลดรูปภาพทั้งหมด
-                </p>
-            </div>
+          )}
         </div>
 
-        <div className="w-full border-t border-white/10 my-6"></div>
+        {/* Vertical Divider */}
+        <div className="w-[2px] h-64 bg-slate-100 rounded-full hidden md:block"></div>
 
-        {/* Restart Instruction */}
-        <div className="flex items-center gap-4 bg-white/5 p-3 rounded-full px-6 border border-white/10">
-           <div className="relative">
-             <div className="w-12 h-12 rounded-full bg-rose-500/20 flex items-center justify-center border-2 border-rose-500 shadow-[0_0_15px_rgba(244,63,94,0.4)] animate-pulse">
-                <Hand className="text-rose-500" size={24} />
-             </div>
-           </div>
-           <div className="text-left">
-             <p className="text-lg font-bold text-white leading-tight">แบมือค้างไว้</p>
-             <p className="text-xs text-rose-300 leading-tight">เพื่อถ่ายใหม่</p>
-           </div>
+        {/* Right Side: QR & Actions */}
+        <div className="flex-1 flex flex-col items-center text-center gap-6 z-10">
+
+          <div>
+            <h2 className="text-4xl font-black text-slate-800 mb-2 drop-shadow-sm">รูปสวยมาก! ✨</h2>
+            <p className="text-slate-500 font-medium">สแกนเพื่อรับรูปได้เลย</p>
+          </div>
+
+          <div className="bg-white p-5 rounded-3xl shadow-[0_10px_40px_-10px_rgba(0,0,0,0.1)] border-2 border-slate-50 transform hover:scale-105 transition-transform duration-300">
+            {uploading ? (
+              <div className="w-[160px] h-[160px] flex flex-col items-center justify-center gap-3">
+                <Loader2 className="w-10 h-10 text-pink-500 animate-spin" />
+                <span className="text-xs font-bold text-pink-400 animate-pulse">Creating Magic...</span>
+              </div>
+            ) : uploadError ? (
+              <div className="w-[160px] h-[160px] flex items-center justify-center text-red-400 text-sm font-bold">
+                {uploadError}
+              </div>
+            ) : (
+              <QRCodeSVG value={qrValue} size={160} level="M" className="rounded-lg" />
+            )}
+          </div>
+
+          {/* Action Hint */}
+          <div className="flex items-center gap-3 bg-pink-50 p-3 pr-6 rounded-full border border-pink-100 mt-2">
+            <div className="w-10 h-10 rounded-full bg-pink-500 flex items-center justify-center shadow-lg shadow-pink-200 animate-pulse">
+              <Hand className="text-white" size={20} />
+            </div>
+            <div className="text-left">
+              <p className="text-sm font-bold text-pink-600">แบมือค้างไว้</p>
+              <p className="text-xs text-pink-400">เพื่อถ่ายใหม่</p>
+            </div>
+          </div>
+
         </div>
+
       </div>
-
     </div>
   );
 };

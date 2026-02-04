@@ -1,6 +1,6 @@
-export const GESTURE_HOLD_DURATION_MS = 3000; // 3 seconds to trigger
+export const GESTURE_HOLD_DURATION_MS = 1500; // 1.5 seconds to trigger
 export const COUNTDOWN_DURATION_SEC = 3;
-export const MAX_PHOTOS = 3;
+export const MAX_PHOTOS = 1; // Changed to single photo mode
 
 // Styles
 export const THEME_COLORS = {

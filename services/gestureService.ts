@@ -16,9 +16,9 @@ export const initializeHandLandmarker = async () => {
     },
     runningMode: "VIDEO",
     numHands: 2,
-    minHandDetectionConfidence: 0.5,
-    minHandPresenceConfidence: 0.5,
-    minTrackingConfidence: 0.5,
+    minHandDetectionConfidence: 0.2,
+    minHandPresenceConfidence: 0.2,
+    minTrackingConfidence: 0.2,
   });
 
   return handLandmarker;
@@ -30,50 +30,72 @@ export const detectGestureInVideo = (video: HTMLVideoElement, timestamp: number)
   const result = handLandmarker.detectForVideo(video, timestamp);
 
   if (result.landmarks.length > 0) {
-    const landmarks = result.landmarks[0]; // Take primary hand
+    // Iterate through ALL detected hands to find a hand showing 5 fingers
+    for (const landmarks of result.landmarks) {
 
-    // Logic to detect "OK" vs "Open Palm"
-    
-    // 1. Check for Open Palm (All fingers extended)
-    // We assume the model's classification is decent, but we can also use geometry.
-    // Let's rely on simple geometry for robustness.
-    
-    const thumbTip = landmarks[4];
-    const indexTip = landmarks[8];
-    const middleTip = landmarks[12];
-    const ringTip = landmarks[16];
-    const pinkyTip = landmarks[20];
-    const wrist = landmarks[0];
+      const thumbTip = landmarks[4];
+      const indexTip = landmarks[8];
+      const middleTip = landmarks[12];
+      const ringTip = landmarks[16];
+      const pinkyTip = landmarks[20];
+      const wrist = landmarks[0];
 
-    // Calculate distance between thumb tip and index tip
-    const pinchDistance = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
-    
-    // Check if other fingers are extended (distance from wrist)
-    const isMiddleExtended = Math.hypot(middleTip.x - wrist.x, middleTip.y - wrist.y) > 0.3;
-    const isRingExtended = Math.hypot(ringTip.x - wrist.x, ringTip.y - wrist.y) > 0.3;
-    const isPinkyExtended = Math.hypot(pinkyTip.x - wrist.x, pinkyTip.y - wrist.y) > 0.3;
+      // Calculate Hand Scale (Palm Size) for dynamic thresholds
+      // Distance between Wrist (0) and Middle Finger MCP (9)
+      const middleMCP = landmarks[9];
+      const palmSize = Math.hypot(middleMCP.x - wrist.x, middleMCP.y - wrist.y);
 
-    // Determine Gesture
-    let gestureName = 'None';
-    
-    // OK Gesture Logic: Thumb and Index close, others extended
-    if (pinchDistance < 0.05 && isMiddleExtended && isRingExtended && isPinkyExtended) {
-      gestureName = 'OK_Hand';
-    } 
-    // Open Palm Logic: All fingers extended and spread
-    else if (isMiddleExtended && isRingExtended && isPinkyExtended && pinchDistance > 0.1) {
-      gestureName = 'Open_Palm';
+      // Dynamic Thresholds - REFINED
+      // Finger is extended if Tip distance from Wrist is > 1.3x Palm Size
+      // (Closed fist ratio is ~1.0. Extended flat hand is ~2.0. 1.8 was too strict for tilted hands)
+      const extensionThreshold = palmSize * 1.3;
+      const thumbExtensionThreshold = palmSize * 1.0;
+      const pinchThreshold = palmSize * 0.6;
+
+      // Calculate distance between thumb tip and index tip
+      const pinchDistance = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
+
+      // Check if fingers are extended (distance from wrist)
+      const distIndex = Math.hypot(indexTip.x - wrist.x, indexTip.y - wrist.y);
+      const distMiddle = Math.hypot(middleTip.x - wrist.x, middleTip.y - wrist.y);
+      const distRing = Math.hypot(ringTip.x - wrist.x, ringTip.y - wrist.y);
+      const distPinky = Math.hypot(pinkyTip.x - wrist.x, pinkyTip.y - wrist.y);
+      const distThumb = Math.hypot(thumbTip.x - wrist.x, thumbTip.y - wrist.y);
+
+      const isIndexExtended = distIndex > extensionThreshold;
+      const isMiddleExtended = distMiddle > extensionThreshold;
+      const isRingExtended = distRing > extensionThreshold;
+      const isPinkyExtended = distPinky > extensionThreshold;
+      const isThumbExtended = distThumb > thumbExtensionThreshold;
+
+      // Debug Log (throttled/only on detection) to help user debug
+      if (Date.now() % 500 < 50) { // Log occasionally to avoid spam
+        console.log("Hand Stats:", {
+          palmSize: palmSize.toFixed(3),
+          ratios: [distIndex / palmSize, distMiddle / palmSize, distThumb / palmSize].map(n => n.toFixed(2)),
+          isOpen: isIndexExtended && isMiddleExtended && isRingExtended && isPinkyExtended
+        });
+      }
+
+      // Determine Gesture
+      let gestureName = 'None';
+
+      // Open Palm Logic: All 5 fingers extended
+      // We accept if just 4 fingers are super extended and thumb is somewhat extended or far from index
+      if (isIndexExtended && isMiddleExtended && isRingExtended && isPinkyExtended && (isThumbExtended || pinchDistance > pinchThreshold)) {
+        gestureName = 'Open_Palm';
+      }
+
+      if (gestureName !== 'None') {
+        // Found a valid gesture on this hand!
+        const trackingPoint = landmarks[9]; // Middle finger MCP
+        return {
+          name: gestureName,
+          x: 1 - trackingPoint.x, // Mirror effect adjustment
+          y: trackingPoint.y
+        };
+      }
     }
-
-    // Return the gesture and the center position (using wrist or middle mcp for tracking UI)
-    // Using Index finger MCP (5) or Wrist (0) usually stable. Let's use Index MCP.
-    const trackingPoint = landmarks[9]; // Middle finger MCP
-
-    return {
-      name: gestureName,
-      x: 1 - trackingPoint.x, // Mirror effect adjustment
-      y: trackingPoint.y
-    };
   }
 
   return null;

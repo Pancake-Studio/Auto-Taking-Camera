@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 export enum AppStage {
   LOADING_MODEL = 'LOADING_MODEL',
   IDLE = 'IDLE',
