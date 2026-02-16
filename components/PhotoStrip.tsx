@@ -55,11 +55,11 @@ const PhotoStrip: React.FC<PhotoStripProps> = ({ photos, onRestart }) => {
               <div className="absolute inset-0 bg-black rounded-2xl transform translate-x-2 translate-y-3 opacity-20 blur-sm"></div>
               <div className="bg-white p-3 rounded-2xl shadow-xl border border-slate-100">
                 {/* Changed aspect-ratio to 4/3 (Landscape) */}
-                <div className="overflow-hidden rounded-xl relative max-w-[60vw] max-h-[60vh] aspect-[4/3]">
+                <div className="overflow-hidden rounded-xl relative max-w-[60vw] max-h-[60vh]">
                   <img
                     src={photos[0].dataUrl}
                     alt="Booth photo"
-                    className="w-full h-full object-cover transform scale-x-[-1]"
+                    className="w-full h-full object-contain"
                   />
                 </div>
                 <div className="mt-2 text-center text-slate-400 font-bold tracking-widest text-xs uppercase opacity-50">
@@ -102,13 +102,13 @@ const PhotoStrip: React.FC<PhotoStripProps> = ({ photos, onRestart }) => {
           </div>
 
           {/* Action Hint */}
-          <div className="flex items-center gap-3 bg-pink-50 p-3 pr-6 rounded-full border border-pink-100 mt-2">
-            <div className="w-10 h-10 rounded-full bg-pink-500 flex items-center justify-center shadow-lg shadow-pink-200 animate-pulse">
-              <Hand className="text-white" size={20} />
+          <div className="flex items-center gap-3 bg-emerald-50 p-3 pr-6 rounded-full border border-emerald-100 mt-2">
+            <div className="w-10 h-10 rounded-full bg-emerald-500 flex items-center justify-center shadow-lg shadow-emerald-200 animate-pulse">
+              <span className="text-2xl">👌</span>
             </div>
             <div className="text-left">
-              <p className="text-sm font-bold text-pink-600">แบมือค้างไว้</p>
-              <p className="text-xs text-pink-400">เพื่อถ่ายใหม่</p>
+              <p className="text-sm font-bold text-emerald-600">โชว์มือ OK ค้างไว้ 3 วิ</p>
+              <p className="text-xs text-emerald-400">เพื่อถ่ายใหม่</p>
             </div>
           </div>
 

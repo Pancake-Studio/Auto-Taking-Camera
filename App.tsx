@@ -98,28 +98,114 @@ const App: React.FC = () => {
     }, 1000);
   }, []);
 
-  const takePhoto = useCallback(() => {
+
+
+  // Function to apply frame overlay to photo
+  const applyFrameToPhoto = async (photoDataUrl: string): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        reject('Canvas context not available');
+        return;
+      }
+
+      const photoImg = new Image();
+      const frameImg = new Image();
+
+      // Load frame first to get its dimensions
+      frameImg.onload = () => {
+        // Set canvas size to match FRAME (not photo)
+        canvas.width = frameImg.width;
+        canvas.height = frameImg.height;
+
+        // Load photo
+        photoImg.onload = () => {
+          // Calculate how to crop photo to fit frame (cover mode)
+          const frameAspect = frameImg.width / frameImg.height;
+          const photoAspect = photoImg.width / photoImg.height;
+
+          let drawWidth, drawHeight, offsetX, offsetY;
+
+          if (photoAspect > frameAspect) {
+            // Photo is wider - fit height and crop width
+            drawHeight = frameImg.height;
+            drawWidth = photoImg.width * (frameImg.height / photoImg.height);
+            offsetX = (frameImg.width - drawWidth) / 2;
+            offsetY = 0;
+          } else {
+            // Photo is taller - fit width and crop height
+            drawWidth = frameImg.width;
+            drawHeight = photoImg.height * (frameImg.width / photoImg.width);
+            offsetX = 0;
+            offsetY = (frameImg.height - drawHeight) / 2;
+          }
+
+          // Draw photo (cropped and centered)
+          ctx.drawImage(photoImg, offsetX, offsetY, drawWidth, drawHeight);
+
+          // Draw frame on top
+          ctx.drawImage(frameImg, 0, 0);
+
+          resolve(canvas.toDataURL('image/jpeg', 0.95));
+        };
+
+        photoImg.onerror = () => reject('Photo failed to load');
+        photoImg.src = photoDataUrl;
+      };
+
+      frameImg.onerror = () => {
+        // If frame fails to load, return photo without frame
+        console.warn('Frame failed to load, using photo without frame');
+        resolve(photoDataUrl);
+      };
+
+      frameImg.src = '/assets/frame.png';
+    });
+  };
+
+  const takePhoto = useCallback(async () => {
     if (isCapturingRef.current) return;
     isCapturingRef.current = true; // Lock
 
     setStage(AppStage.CAPTURE_FLASH);
     setFlash(true);
-    setTimeout(() => {
+    setTimeout(async () => {
       if (webcamRef.current) {
         const imageSrc = webcamRef.current.getScreenshot();
         if (imageSrc) {
-          setPhotos(currentPhotos => {
-            const updated = [...currentPhotos, { id: Date.now().toString(), dataUrl: imageSrc, timestamp: Date.now() }];
-            if (updated.length >= MAX_PHOTOS) {
-              setTimeout(() => setStage(AppStage.RESULT), 500);
-            } else {
-              setTimeout(() => {
-                setStage(AppStage.IDLE);
-                isCapturingRef.current = false; // Unlock if taking more photos
-              }, 1000);
-            }
-            return updated;
-          });
+          try {
+            // Apply frame overlay
+            const framedImage = await applyFrameToPhoto(imageSrc);
+
+            setPhotos(currentPhotos => {
+              const updated = [...currentPhotos, { id: Date.now().toString(), dataUrl: framedImage, timestamp: Date.now() }];
+              if (updated.length >= MAX_PHOTOS) {
+                setTimeout(() => setStage(AppStage.RESULT), 500);
+              } else {
+                setTimeout(() => {
+                  setStage(AppStage.IDLE);
+                  isCapturingRef.current = false; // Unlock if taking more photos
+                }, 1000);
+              }
+              return updated;
+            });
+          } catch (error) {
+            console.error('Failed to apply frame:', error);
+            // Fallback: use photo without frame
+            setPhotos(currentPhotos => {
+              const updated = [...currentPhotos, { id: Date.now().toString(), dataUrl: imageSrc, timestamp: Date.now() }];
+              if (updated.length >= MAX_PHOTOS) {
+                setTimeout(() => setStage(AppStage.RESULT), 500);
+              } else {
+                setTimeout(() => {
+                  setStage(AppStage.IDLE);
+                  isCapturingRef.current = false;
+                }, 1000);
+              }
+              return updated;
+            });
+          }
           setFlash(false);
           // Note: isCapturingRef stays true if we go to RESULT, unlocked only on restart
           if (photos.length + 1 < MAX_PHOTOS) {
@@ -148,9 +234,9 @@ const App: React.FC = () => {
 
   const handleGestureTrigger = useCallback((gestureName: string) => {
     if (stage === AppStage.IDLE) {
-      if (gestureName === 'Open_Palm') startCountdown();
+      if (gestureName === 'Two_Fingers') startCountdown();
     } else if (stage === AppStage.RESULT) {
-      if (gestureName === 'Open_Palm') restartApp();
+      if (gestureName === 'OK_Hand') restartApp();
     }
   }, [stage, photos.length, startCountdown, finishSession, restartApp]);
 
@@ -233,14 +319,14 @@ const App: React.FC = () => {
 
             <div className="flex flex-col items-center gap-3 text-white anim-pop hover:scale-105 transition-transform duration-300">
               <div className="relative">
-                <div className="absolute -inset-4 bg-pink-500/30 rounded-full blur-xl animate-pulse"></div>
-                <div className="w-24 h-24 rounded-full bg-white/10 backdrop-blur-md border-[3px] border-pink-400 flex items-center justify-center shadow-2xl overflow-hidden group">
-                  <Hand size={48} className="text-pink-300 group-hover:rotate-12 transition-transform" />
+                <div className="absolute -inset-4 bg-blue-500/30 rounded-full blur-xl animate-pulse"></div>
+                <div className="w-24 h-24 rounded-full bg-white/10 backdrop-blur-md border-[3px] border-blue-400 flex items-center justify-center shadow-2xl overflow-hidden group">
+                  <div className="text-6xl">✌️</div>
                 </div>
               </div>
               <div className="text-center bg-black/40 backdrop-blur-sm px-6 py-3 rounded-2xl border border-white/10">
-                <span className="block text-xl font-bold text-white mb-1">แบมือแล้วโบกไปมา</span>
-                <span className="text-sm text-pink-300 font-medium">เพื่อถ่ายรูป ({photos.length}/{MAX_PHOTOS})</span>
+                <span className="block text-xl font-bold text-white mb-1">ทำมือโชว์ 2 นิ้ว ค้างไว้ 3 วิ</span>
+                <span className="text-sm text-blue-300 font-medium">เพื่อเริ่มถ่ายรูป ({photos.length}/{MAX_PHOTOS})</span>
               </div>
             </div>
 

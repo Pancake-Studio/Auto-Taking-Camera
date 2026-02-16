@@ -9,7 +9,8 @@ export enum AppStage {
 }
 
 export interface DetectedGesture {
-  name: 'Open_Palm' | 'OK_Hand' | 'None';
+  id?: number; // Stable hand ID for tracking
+  name: 'OK_Hand' | 'Two_Fingers' | 'None';
   x: number; // Normalized 0-1
   y: number; // Normalized 0-1
 }

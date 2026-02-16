@@ -1,5 +1,5 @@
-export const GESTURE_HOLD_DURATION_MS = 1500; // 1.5 seconds to trigger
-export const COUNTDOWN_DURATION_SEC = 3;
+export const GESTURE_HOLD_DURATION_MS = 3000; // 3 seconds to trigger
+export const COUNTDOWN_DURATION_SEC = 5; // 5 seconds countdown before photo
 export const MAX_PHOTOS = 1; // Changed to single photo mode
 
 // Styles

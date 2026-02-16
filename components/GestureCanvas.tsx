@@ -12,6 +12,11 @@ interface GestureCanvasProps {
     error: string | null;
 }
 
+interface GestureWithProgress extends DetectedGesture {
+    progress: number;
+    accumulatedTime: number;
+}
+
 const GestureCanvas: React.FC<GestureCanvasProps> = ({
     webcamRef,
     isDetectionActive,
@@ -22,22 +27,16 @@ const GestureCanvas: React.FC<GestureCanvasProps> = ({
     const requestRef = useRef<number>(0);
     const lastVideoTimeRef = useRef<number>(-1);
 
-    // Local state for smooth optimized rendering preventing App re-renders
-    const [gesture, setGesture] = useState<DetectedGesture | null>(null);
-    const [loadingProgress, setLoadingProgress] = useState(0);
-
-    // Wave Detection State
-    const historyRef = useRef<{ x: number, time: number }[]>([]);
-    const accumulatedTimeRef = useRef<number>(0);
+    // Track multiple gestures with their progress
+    const [gestures, setGestures] = useState<GestureWithProgress[]>([]);
+    const gestureTimersRef = useRef<Map<string, { time: number, gestureName: string }>>(new Map());
     const lastFrameTimeRef = useRef<number>(0);
 
     // Clear state when detection becomes inactive
     useEffect(() => {
         if (!isDetectionActive) {
-            setGesture(null);
-            setLoadingProgress(0);
-            accumulatedTimeRef.current = 0;
-            historyRef.current = [];
+            setGestures([]);
+            gestureTimersRef.current.clear();
         }
     }, [isDetectionActive]);
 
@@ -50,71 +49,67 @@ const GestureCanvas: React.FC<GestureCanvasProps> = ({
 
             if (video.currentTime !== lastVideoTimeRef.current) {
                 lastVideoTimeRef.current = video.currentTime;
-                const result = detectGestureInVideo(video, now);
+                const results = detectGestureInVideo(video, now);
 
-                if (result) {
-                    const currentGestureName = result.name;
+                if (results && Array.isArray(results)) {
+                    const newGestures: GestureWithProgress[] = [];
+                    const currentGestureKeys = new Set<string>();
 
-                    // Logic to prevent "Double Shot"
-                    if (window.lastTriggeredGesture === currentGestureName) {
-                        setGesture({ ...result, name: currentGestureName as any });
-                        // No progress update
-                        historyRef.current = []; // Reset history
-                        accumulatedTimeRef.current = 0;
-                    } else {
-                        // Valid logic
-                        if (window.lastTriggeredGesture && window.lastTriggeredGesture !== currentGestureName) {
-                            window.lastTriggeredGesture = null;
-                        }
+                    results.forEach((result, index) => {
+                        // Use stable hand ID as key instead of position
+                        const gestureKey = result.id ? `hand-${result.id}-${result.name}` : `temp-${index}`;
+                        currentGestureKeys.add(gestureKey);
 
-                        // WAVE DETECTION LOGIC
-                        // 1. Add current position to history
-                        historyRef.current.push({ x: result.x, time: now });
-                        // 2. Keep last 400ms (Reduced from 1000ms to enforce continuous movement)
-                        historyRef.current = historyRef.current.filter(p => now - p.time < 400);
+                        // Check if this gesture was already being tracked
+                        let accumulatedTime = 0;
+                        const existing = gestureTimersRef.current.get(gestureKey);
 
-                        // 3. Analyze movement (Amplitude of X)
-                        const xs = historyRef.current.map(p => p.x);
-                        const minX = Math.min(...xs);
-                        const maxX = Math.max(...xs);
-                        const amplitude = maxX - minX;
-
-                        // Threshold: Must move at least 1.5% of screen width (Small movements allowed)
-                        // Reduced samples requirement to 3 to catch fast swipes
-                        const isWaving = amplitude > 0.015 && historyRef.current.length >= 3;
-
-                        setGesture({ ...result, name: currentGestureName as any });
-
-                        if (isWaving) {
-                            accumulatedTimeRef.current += dt;
-                            // Store last wave time
-                            (historyRef.current as any).lastWaveTime = now;
+                        if (existing && existing.gestureName === result.name) {
+                            accumulatedTime = existing.time + dt;
                         } else {
-                            const lastWave = (historyRef.current as any).lastWaveTime || 0;
-                            if (now - lastWave < 350) {
-                                // Grace period: User just stopped or moved too fast
-                                accumulatedTimeRef.current += dt;
-                            }
-                            // Else: Pause
+                            accumulatedTime = dt;
                         }
 
-                        const progress = Math.min(accumulatedTimeRef.current / GESTURE_HOLD_DURATION_MS, 1);
-                        setLoadingProgress(progress);
-
-                        if (progress >= 1) {
-                            // Trigger!
-                            onGestureTrigger(currentGestureName);
-                            accumulatedTimeRef.current = 0;
-                            historyRef.current = [];
-                            setLoadingProgress(0);
+                        // Check if already triggered
+                        if (window.lastTriggeredGesture === result.name) {
+                            // Don't accumulate time for already triggered gesture
+                            accumulatedTime = 0;
                         }
-                    }
 
+                        const progress = Math.min(accumulatedTime / GESTURE_HOLD_DURATION_MS, 1);
+
+                        // Update timer
+                        gestureTimersRef.current.set(gestureKey, {
+                            time: accumulatedTime,
+                            gestureName: result.name
+                        });
+
+                        // Trigger if complete
+                        if (progress >= 1 && window.lastTriggeredGesture !== result.name) {
+                            onGestureTrigger(result.name);
+                            gestureTimersRef.current.delete(gestureKey);
+                        } else {
+                            newGestures.push({
+                                ...result,
+                                progress,
+                                accumulatedTime
+                            });
+                        }
+                    });
+
+                    // Clean up gestures that are no longer detected
+                    const keysToDelete: string[] = [];
+                    gestureTimersRef.current.forEach((_, key) => {
+                        if (!currentGestureKeys.has(key)) {
+                            keysToDelete.push(key);
+                        }
+                    });
+                    keysToDelete.forEach(key => gestureTimersRef.current.delete(key));
+
+                    setGestures(newGestures);
                 } else {
-                    setGesture(null);
-                    setLoadingProgress(0);
-                    accumulatedTimeRef.current = 0;
-                    historyRef.current = [];
+                    setGestures([]);
+                    gestureTimersRef.current.clear();
                     // Clear lock if hand dropped
                     if (window.lastTriggeredGesture) {
                         window.lastTriggeredGesture = null;
@@ -123,63 +118,75 @@ const GestureCanvas: React.FC<GestureCanvasProps> = ({
             }
         } else {
             // Not active
-            if (gesture) setGesture(null);
+            if (gestures.length > 0) setGestures([]);
         }
         requestRef.current = requestAnimationFrame(animate);
-    }, [isDetectionActive, error, onGestureTrigger]); // removing dependencies that change often
+    }, [isDetectionActive, error, onGestureTrigger]);
 
     useEffect(() => {
         requestRef.current = requestAnimationFrame(animate);
         return () => cancelAnimationFrame(requestRef.current!);
     }, [animate]);
 
-    // Render Cursor
-    if (!gesture || loadingProgress <= 0) return null;
-
-    // Mirror X for cursor position to match mirrored video
-    const left = `${gesture.x * 100}%`;
-    const top = `${gesture.y * 100}%`;
-    const color = gesture.name === 'Open_Palm' ? 'text-pink-400' : 'text-emerald-400';
-
-    let message = '';
-    // Simple mapping based on known stage names from parent
-    if (stage === 'IDLE') {
-        message = gesture.name === 'Open_Palm' ? 'โบกมือค้างไว้...' : 'เสร็จสิ้น...';
-    } else if (stage === 'RESULT') {
-        message = 'โบกมือเพื่อเริ่ม...';
-    }
+    // Render multiple cursors
+    if (gestures.length === 0) return null;
 
     return (
-        <div
-            className="absolute w-28 h-28 pointer-events-none transform -translate-x-1/2 -translate-y-1/2 flex items-center justify-center z-[70]"
-            style={{ left, top }}
-        >
-            <div className="relative w-full h-full">
-                {/* Glow Effect */}
-                <div className={`absolute inset-0 rounded-full blur-xl opacity-40 ${gesture.name === 'Open_Palm' ? 'bg-pink-500' : 'bg-emerald-500'}`} />
+        <>
+            {gestures.map((gesture, index) => {
+                if (gesture.progress <= 0) return null;
 
-                <svg className="w-full h-full transform -rotate-90 drop-shadow-lg relative z-10">
-                    <circle cx="50%" cy="50%" r="46%" stroke="rgba(255,255,255,0.2)" strokeWidth="8" fill="transparent" />
-                    <circle
-                        cx="50%" cy="50%" r="46%"
-                        stroke="currentColor"
-                        strokeWidth="8"
-                        fill="transparent"
-                        className={`${color} transition-all duration-75`}
-                        strokeDasharray="289" // 2 * pi * 46
-                        strokeDashoffset={289 * (1 - loadingProgress)}
-                        strokeLinecap="round"
-                    />
-                </svg>
+                const left = `${gesture.x * 100}%`;
+                const top = `${gesture.y * 100}%`;
+                const color = gesture.name === 'Two_Fingers' ? 'text-blue-400' : gesture.name === 'OK_Hand' ? 'text-emerald-400' : 'text-pink-400';
 
-                {/* Cute Badge */}
-                <div className="absolute top-full left-1/2 transform -translate-x-1/2 -mt-2">
-                    <span className="inline-block bg-white/90 text-slate-800 text-sm font-black px-3 py-1 rounded-2xl shadow-lg border-2 border-pink-200 whitespace-nowrap">
-                        {message}
-                    </span>
-                </div>
-            </div>
-        </div>
+                let message = '';
+                if (stage === 'IDLE') {
+                    message = gesture.name === 'Two_Fingers' ? 'ค้างไว้ 3 วิ...' : 'เสร็จสิ้น...';
+                } else if (stage === 'RESULT') {
+                    message = gesture.name === 'OK_Hand' ? 'ค้างไว้ 3 วิ...' : 'โชว์มือ OK...';
+                }
+
+                // Calculate circle properties
+                const radius = 46;
+                const circumference = 2 * Math.PI * radius;
+                const offset = circumference * (1 - gesture.progress);
+
+                return (
+                    <div
+                        key={`${gesture.name}-${index}`}
+                        className="absolute w-28 h-28 pointer-events-none transform -translate-x-1/2 -translate-y-1/2 flex items-center justify-center z-[70]"
+                        style={{ left, top }}
+                    >
+                        <div className="relative w-full h-full">
+                            {/* Glow Effect */}
+                            <div className={`absolute inset-0 rounded-full blur-xl opacity-40 ${gesture.name === 'Two_Fingers' ? 'bg-blue-500' : gesture.name === 'OK_Hand' ? 'bg-emerald-500' : 'bg-pink-500'}`} />
+
+                            <svg className="w-full h-full transform -rotate-90 drop-shadow-lg relative z-10">
+                                <circle cx="50%" cy="50%" r={`${radius}%`} stroke="rgba(255,255,255,0.2)" strokeWidth="8" fill="transparent" />
+                                <circle
+                                    cx="50%" cy="50%" r={`${radius}%`}
+                                    stroke="currentColor"
+                                    strokeWidth="8"
+                                    fill="transparent"
+                                    className={`${color} transition-all duration-75`}
+                                    strokeDasharray={circumference}
+                                    strokeDashoffset={offset}
+                                    strokeLinecap="round"
+                                />
+                            </svg>
+
+                            {/* Cute Badge */}
+                            <div className="absolute top-full left-1/2 transform -translate-x-1/2 -mt-2">
+                                <span className="inline-block bg-white/90 text-slate-800 text-sm font-black px-3 py-1 rounded-2xl shadow-lg border-2 border-pink-200 whitespace-nowrap">
+                                    {message}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                );
+            })}
+        </>
     );
 };
 
