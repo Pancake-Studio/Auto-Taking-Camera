@@ -32,7 +32,9 @@ const App: React.FC = () => {
   const [countdown, setCountdown] = useState<number | null>(null);
   const [flash, setFlash] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [qrVisibleAt, setQrVisibleAt] = useState<number | null>(null);
   const isCapturingRef = useRef(false);
+  const [, setQrTick] = useState(0);
 
   // Refs
   const webcamRef = useRef<Webcam>(null);
@@ -230,18 +232,41 @@ const App: React.FC = () => {
     if (stage === AppStage.IDLE) {
       isCapturingRef.current = false;
     }
+    if (stage !== AppStage.RESULT) {
+      setQrVisibleAt(null);
+    }
   }, [stage]);
+
+  // Tick to update remaining QR wait display while QR lock is active
+  useEffect(() => {
+    if (!qrVisibleAt) return;
+    const id = setInterval(() => setQrTick(t => t + 1), 500);
+    return () => clearInterval(id);
+  }, [qrVisibleAt]);
 
   const handleGestureTrigger = useCallback((gestureName: string) => {
     if (stage === AppStage.IDLE) {
       if (gestureName === 'Two_Fingers') startCountdown();
     } else if (stage === AppStage.RESULT) {
-      if (gestureName === 'OK_Hand') restartApp();
+      if (gestureName === 'OK_Hand') {
+        // Only allow restart (take new photos) if QR has been visible for at least 7 seconds
+        if (!qrVisibleAt) return; // QR not ready yet
+        const elapsed = Date.now() - qrVisibleAt;
+        if (elapsed >= 7000) {
+          restartApp();
+        } else {
+          // still within wait period - ignore gesture
+          return;
+        }
+      }
     }
-  }, [stage, photos.length, startCountdown, finishSession, restartApp]);
+  }, [stage, photos.length, startCountdown, finishSession, restartApp, qrVisibleAt]);
 
   // Logic to determine if detection should run
   const isDetectionActive = (stage === AppStage.IDLE || stage === AppStage.RESULT) && !error;
+
+  // Remaining wait seconds after QR appears (7s lock)
+  const qrWaitRemaining = qrVisibleAt ? Math.max(0, Math.ceil((7000 - (Date.now() - qrVisibleAt)) / 1000)) : 0;
 
   if (stage === AppStage.LOADING_MODEL) {
     return (
@@ -350,7 +375,7 @@ const App: React.FC = () => {
       {/* Result Overlay - PhotoStrip */}
       {stage === AppStage.RESULT && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-slate-900/90 backdrop-blur-md animate-in fade-in duration-500">
-          <PhotoStrip photos={photos} onRestart={restartApp} />
+          <PhotoStrip photos={photos} onRestart={restartApp} onQRVisible={() => setQrVisibleAt(Date.now())} />
         </div>
       )}
 
@@ -361,6 +386,9 @@ const App: React.FC = () => {
         onGestureTrigger={handleGestureTrigger}
         stage={stage}
         error={error}
+        qrWaitRemaining={qrWaitRemaining}
+      />
+
       />
 
       {/* Camera Selection Button */}

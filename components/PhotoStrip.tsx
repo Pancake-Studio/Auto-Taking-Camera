@@ -7,9 +7,10 @@ import { uploadPhotos } from '../services/uploadService';
 interface PhotoStripProps {
   photos: PhotoData[];
   onRestart: () => void;
+  onQRVisible?: () => void;
 }
 
-const PhotoStrip: React.FC<PhotoStripProps> = ({ photos, onRestart }) => {
+const PhotoStrip: React.FC<PhotoStripProps> = ({ photos, onRestart, onQRVisible }) => {
   const [uploading, setUploading] = useState(true);
   const [uploadedUrls, setUploadedUrls] = useState<string[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -20,6 +21,10 @@ const PhotoStrip: React.FC<PhotoStripProps> = ({ photos, onRestart }) => {
       try {
         const urls = await uploadPhotos(photos);
         setUploadedUrls(urls);
+        // Notify parent that QR is now visible
+        if (urls && urls.length > 0 && typeof onQRVisible === 'function') {
+          onQRVisible();
+        }
         setUploading(false);
       } catch (error) {
         console.error('Upload failed:', error);

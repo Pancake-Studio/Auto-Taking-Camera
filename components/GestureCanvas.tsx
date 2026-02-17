@@ -10,6 +10,7 @@ interface GestureCanvasProps {
     onGestureTrigger: (gestureName: string) => void;
     stage: string; // Used for cursor messaging
     error: string | null;
+    qrWaitRemaining?: number;
 }
 
 interface GestureWithProgress extends DetectedGesture {
@@ -22,7 +23,8 @@ const GestureCanvas: React.FC<GestureCanvasProps> = ({
     isDetectionActive,
     onGestureTrigger,
     stage,
-    error
+    error,
+    qrWaitRemaining
 }) => {
     const requestRef = useRef<number>(0);
     const lastVideoTimeRef = useRef<number>(-1);
@@ -144,7 +146,15 @@ const GestureCanvas: React.FC<GestureCanvasProps> = ({
                 if (stage === 'IDLE') {
                     message = gesture.name === 'Two_Fingers' ? 'ค้างไว้ 3 วิ...' : 'เสร็จสิ้น...';
                 } else if (stage === 'RESULT') {
-                    message = gesture.name === 'OK_Hand' ? 'ค้างไว้ 3 วิ...' : 'โชว์มือ OK...';
+                    if (gesture.name === 'OK_Hand') {
+                        if (typeof qrWaitRemaining === 'number' && qrWaitRemaining > 0) {
+                            message = `รอ ${qrWaitRemaining} วิ`;
+                        } else {
+                            message = 'ค้างไว้ 3 วิ...';
+                        }
+                    } else {
+                        message = 'โชว์มือ OK...';
+                    }
                 }
 
                 // Calculate circle properties
