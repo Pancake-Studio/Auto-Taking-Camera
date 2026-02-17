@@ -2,7 +2,7 @@ import { uploadFile, UploadcareSimpleAuthSchema } from '@uploadcare/upload-clien
 
 const PUBLIC_KEY = import.meta.env.VITE_UPLOADCARE_PUBLIC_KEY || '69f401d5e57903db334d';
 const SECRET_KEY = '6930f3453cb605fc06a3'; // Only for server-side deletion
-const CUSTOM_CDN_DOMAIN = 'https://101bd2xbfp.ucarecd.net/';
+const CUSTOM_CDN_DOMAIN = import.meta.env.VITE_UPLOADCARE_CDN_DOMAIN || 'https://101bd2xbfp.ucarecd.net/';
 
 export interface UploadResult {
     fileUrl: string;
