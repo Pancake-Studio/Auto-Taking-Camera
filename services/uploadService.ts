@@ -2,11 +2,32 @@ import { uploadFile, UploadcareSimpleAuthSchema } from '@uploadcare/upload-clien
 
 const PUBLIC_KEY = import.meta.env.VITE_UPLOADCARE_PUBLIC_KEY || '69f401d5e57903db334d';
 const SECRET_KEY = '6930f3453cb605fc06a3'; // Only for server-side deletion
+const CUSTOM_CDN_DOMAIN = 'https://101bd2xbfp.ucarecd.net/';
 
 export interface UploadResult {
     fileUrl: string;
     uuid: string;
 }
+
+/**
+ * Convert CDN URL to custom domain if needed
+ */
+const normalizeUrl = (url: string): string => {
+    if (!url) return '';
+    // If URL is just a UUID, append custom domain
+    if (!url.includes('://')) {
+        return `${CUSTOM_CDN_DOMAIN}${url}/`;
+    }
+    // Replace ucarecdn.com with custom domain if it's a standard Uploadcare URL
+    if (url.includes('ucarecdn.com')) {
+        const uuid = url.match(/ucarecdn\.com\/([a-f0-9-]+)/)?.[1];
+        if (uuid) {
+            return `${CUSTOM_CDN_DOMAIN}${uuid}/`;
+        }
+    }
+    // Already using custom domain or valid URL
+    return url;
+};
 
 /**
  * Upload a base64 image to Uploadcare
@@ -27,7 +48,7 @@ export const uploadImage = async (dataUrl: string, filename: string): Promise<Up
     });
 
     return {
-        fileUrl: result.cdnUrl || '',
+        fileUrl: normalizeUrl(result.cdnUrl || result.uuid || ''),
         uuid: result.uuid || ''
     };
 };
