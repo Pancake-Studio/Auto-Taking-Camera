@@ -1,7 +1,7 @@
 import { uploadFile, UploadcareSimpleAuthSchema } from '@uploadcare/upload-client';
 
-const PUBLIC_KEY = import.meta.env.VITE_UPLOADCARE_PUBLIC_KEY || '';
-const SECRET_KEY = '9b6d287a02ad127e4304'; // Only for server-side deletion
+const PUBLIC_KEY = import.meta.env.VITE_UPLOADCARE_PUBLIC_KEY || '69f401d5e57903db334d';
+const SECRET_KEY = '6930f3453cb605fc06a3'; // Only for server-side deletion
 
 export interface UploadResult {
     fileUrl: string;
