@@ -389,7 +389,6 @@ const App: React.FC = () => {
         qrWaitRemaining={qrWaitRemaining}
       />
 
-      />
 
       {/* Camera Selection Button */}
       <div className="absolute top-6 right-6 z-[60] pointer-events-auto">
